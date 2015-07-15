@@ -4,14 +4,15 @@ import time
 import datetime
 import tkinter as Tk
 from edu.unco.mast.src.ga import Algorithm, CrossoverType, SelectionType, TerminationType
-import PIL
+from PIL import Image
+from PIL import ImageTk
 
 class App:
 
     CONTROLWIDTH = 512
     CONTROLHEIGHT = 512
 
-    DISPLAYWIDTH = 512
+    DISPLAYWIDTH = 1024
     DISPLAYHEIGHT = 512
 
     GENENUMBERS = [8, 16, 32, 64]
@@ -39,7 +40,9 @@ class App:
         self.__convergenceConfidence = 10
         self.__permutateAttributes = False
         self.__evaluationDictionary = {}
-        self.__displayImagePath = ""
+        self.__displayImagePath = None
+        self.__useDisplay = False
+        self.__displayImage = None
 
         self.__root = Tk.Tk()
         self.__root.wm_title("GeneTwo Genetic Algorithm Simulation")
@@ -69,6 +72,16 @@ class App:
             self.__controlFrame, text = "Brute Force", command = self.__runBruteForce, width = 20
         )
         self.__bruteForceButton.grid(row = 4, column = 0)
+        self.__displayVar = Tk.BooleanVar(self.__controlFrame)
+        self.__displayField = Tk.Checkbutton(self.__controlFrame, text = "Live Display",
+                                             var = self.__displayVar, onvalue = True, offvalue = False)
+        if (self.__useDisplay):
+            self.__displayField.select()
+        self.__displayField.grid(row = 5, column = 0)
+        self.__displayCanvas = Tk.Canvas(self.__displayFrame, width = self.DISPLAYWIDTH, height = self.DISPLAYHEIGHT)
+        self.__displayCanvas.grid(row = 0, column = 0)
+        self.__displayArea = Tk.Text(self.__displayFrame, state = Tk.DISABLED, width = 100, height = 4)
+        self.__displayArea.grid(row = 1, column = 0)
 
     def __buildNotificationDialog(self, message):
         self.__notificationDialog = Tk.Toplevel()
@@ -154,18 +167,24 @@ class App:
                 while(i < len(config)):
                     i += 1
                     config[i] = config[i].replace(" ", "")
+                    config[i] = config[i].replace("\n", "")
                     if (">" in config[i]):
                         break
                     words = config[i].split('=')
                     self.__evaluationDictionary.update({words[0]:float(words[1])})
+                    for c in words[1]:
+                        print(c)
             elif ("DISPLAY<" in config[i]):
+                print("Display found")
                 while(i < len(config)):
                     i += 1
                     config[i] = config[i].replace(" ", "")
                     if (">" in config[i]):
                         break
-                    if (words[0] == "DisplayImage"):
-                            self.__displayImagePath = words[1]
+                    words = config[i].split('=')
+                    if (len(words) > 1):
+                        if (words[0] == "DisplayImage"):
+                            self.__displayImagePath = words[1].replace("\n", "")
             i += 1
 
     def __buildAttributeDialog(self):
@@ -289,11 +308,20 @@ class App:
              self.__attributeDialog.destroy()
 
     def __runAlgorithm(self):
+        self.__useDisplay = self.__displayVar.get()
         if (len(self.__evaluationDictionary) < 1):
             self.__buildNotificationDialog(str("The evaluation settings have not yet been defined."))
             return
+        if (self.__displayImagePath == None):
+            self.__buildNotificationDialog(str("No display image has been defined."))
+            return
+        self.__displayImage = Image.open(self.__displayImagePath)
+        self.__displayImage = self.__displayImage.resize((self.DISPLAYWIDTH, self.DISPLAYHEIGHT), Image.ANTIALIAS)
+        self.__parsedImage = ImageTk.PhotoImage(self.__displayImage, master = self.__displayCanvas)
+        self.__displayCanvas.create_image(0, 0, image=self.__parsedImage, anchor=Tk.NW)
         #Convert string-based attributes to their corresponding enums
         if self.__permutateAttributes:
+
             log = open("../logs/" + str(datetime.datetime.now().date()) + str(datetime.datetime.now().timestamp()) + ".txt", 'w')
             algoNum = 0
             for terminationEnum in [0, 2]:
@@ -329,7 +357,7 @@ class App:
                                                         startTime = time.clock() * 1000
                                                         done = False
                                                         while not done:
-                                                            done = self.__algorithm.nextGen()
+                                                            done = self.__algorithm.nextGen()[0]
                                                         log.write("Run " + str(i + 1) + ": \n")
                                                         log.write("Milliseconds elapsed: " + str((time.clock() * 1000) - startTime) + "\n")
                                                         log.write("Final Population: Generation " + str(self.__algorithm.getGenerationsPassed()))
@@ -381,17 +409,50 @@ class App:
                                          self.__mutationChance, self.__eliteSize, selectionType, terminationType, self.__optimumX,
                                          self.__optimumY, self.__convergenceConfidence, self.__evaluationDictionary)
             startTime = time.clock() * 1000
+            bestEval = 0
+            bestEvalTime = startTime
             done = False
             while not done:
-                done = self.__algorithm.nextGen()
+                ngRes = self.__algorithm.nextGen()
+                if (ngRes[1] > bestEval):
+                    bestEval = ngRes[1]
+                    bestEvalTime = (time.clock() * 1000) - startTime
+                done = ngRes[0]
+                if self.__useDisplay:
+                    self.__populateDisplay((time.clock() * 1000) - startTime, bestEvalTime)
+                    time.sleep(0.0625)
+            self.__populateDisplay((time.clock() * 1000) - startTime, bestEvalTime)
             print("Milliseconds elapsed:",(time.clock() * 1000) - startTime)
             print("Final Population: Generation",self.__algorithm.getGenerationsPassed())
             print(self.__algorithm.getEvalData())
+
+    def __populateDisplay(self, time, bestEvalTime):
+        self.__displayCanvas.delete("dot")
+        for coord in self.__algorithm.getDisplayCoords(0, self.DISPLAYWIDTH - 1, 0, self.DISPLAYHEIGHT):
+           self.__displayCanvas.create_oval(
+                coord[0] - 5, coord[1] - 5, coord[0] + 5, coord[1] + 5, fill = "red", tag = "dot"
+            )
+        self.__displayCanvas.update()
+        self.__displayArea.config(state = Tk.NORMAL)
+        self.__displayArea.delete("1.0", Tk.END)
+        self.__displayArea.insert("1.0", "Generation " + str(self.__algorithm.getGenerationsPassed()) + ":\n")
+        stats = self.__algorithm.getEvalData()
+        self.__displayArea.insert("3.0", str("Average X: " + str(stats[0]) + ", Average Y: " + str(stats[1]) + ", Average Fitness: " + str(stats[2]) + "\n"))
+        self.__displayArea.insert("4.0", str("Best X: " + str(stats[4]) + ", Best Y: " + str(stats[5]) + ", Best Fitness: " + str(stats[3]) + "\n"))
+        self.__displayArea.insert("5.0", str("Best Fitness Generation: " + str(stats[6]) +", Best Fitness Time: " + str(bestEvalTime) + ", Total Time Elapsed: " + str(time) + "\n"))
+        self.__displayArea.config(state = Tk.DISABLED)
 
     def __runBruteForce(self):
         if (len(self.__evaluationDictionary) < 1):
             self.__buildNotificationDialog(str("The evaluation settings have not yet been defined."))
             return
+        if (self.__displayImagePath == None):
+            self.__buildNotificationDialog(str("No display image has been defined."))
+            return
+        self.__displayImage = Image.open(self.__displayImagePath)
+        self.__displayImage = self.__displayImage.resize((self.DISPLAYWIDTH, self.DISPLAYHEIGHT), Image.ANTIALIAS)
+        self.__parsedImage = ImageTk.PhotoImage(self.__displayImage, master = self.__displayCanvas)
+        self.__displayCanvas.create_image(0, 0, image=self.__parsedImage, anchor=Tk.NW)
         crossoverType = -1
         if (self.__crossoverType == "SINGLEPOINT"):
             crossoverType = CrossoverType.SINGLEPOINT
@@ -432,8 +493,21 @@ class App:
                                      self.__mutationChance, self.__eliteSize, selectionType, terminationType, self.__optimumX,
                                      self.__optimumY, self.__convergenceConfidence, self.__evaluationDictionary)
         startTime = time.clock() * 1000
-        bfRes = self.__algorithm.bruteForce()
-        print("Milliseconds Elapsed:",(time.clock() * 1000) - startTime)
+        bfRes = self.__algorithm.bruteForce(self.DISPLAYWIDTH, self.DISPLAYHEIGHT)
+        te = (time.clock() * 1000) - startTime
+        for coord in bfRes[2]:
+           self.__displayCanvas.create_oval(
+                coord[0] - 5, coord[1] - 5, coord[0] + 5, coord[1] + 5, fill = "blue", tag = "dot"
+            )
+        self.__displayCanvas.update()
+        self.__displayArea.config(state = Tk.NORMAL)
+        self.__displayArea.delete("1.0", Tk.END)
+        self.__displayArea.insert("1.0", "Brute Force: \n")
+        self.__displayArea.insert("3.0", str("Best Score: " + str(bfRes[0])))
+        self.__displayArea.insert("3.0", str("Locations: " + str(bfRes[1])))
+        self.__displayArea.insert("4.0", str("Total Time Elapsed: " + str(te)))
+        self.__displayArea.config(state = Tk.DISABLED)
+        print("Milliseconds Elapsed:",te)
         print("Best Score:", bfRes[0])
         print("Locations:", bfRes[1])
 

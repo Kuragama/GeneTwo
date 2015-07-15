@@ -50,6 +50,8 @@ class Algorithm:
 
         self.__gens = 0
         self.__convergedGens = 0
+        self.__bestEval = 0
+        self.__bestEvalGen = 0
 
     def aggregateChromosomes(self, member):
         n = 0
@@ -71,26 +73,34 @@ class Algorithm:
         childPop = []
         for i in range(self.NUMELITE):
             elitePop.append(self.__population.getMember(i))
-        if (self.SELECTIONTYPE == SelectionType.ROULETTETOTAL):
-            childPop = self.__createChildren(self.__population.getMembers())
+        if (self.CROSSOVERTYPE == CrossoverType.NONE):
+            for i in range(self.NUMELITE, self.__population.getSize()):
+                childPop.append(self.__population.getMember(i))
         else:
-            childPop = self.__createChildren(elitePop)
+            if (self.SELECTIONTYPE == SelectionType.ROULETTETOTAL):
+                childPop = self.__createChildren(self.__population.getMembers())
+            else:
+                childPop = self.__createChildren(elitePop)
         self.__mutateChildren(childPop)
         self.__population.setMembers(elitePop + childPop)
-        return self.__checkTermination()
+        return [self.__checkTermination(), self.__bestEval]
 
     def __sortPopulation(self):
         evalData = []
         for i in range(self.__population.getSize()):
-            evalData.append([i, self.__evaluator.evaluate(self.__population.getMember(i).getChromosome(0),
+            eval = self.__evaluator.evaluate(self.__population.getMember(i).getChromosome(0),
                                                           self.__population.getMember(i).getChromosome(1),
-                                                          self.NUMGENES)])
-        evalData = list(reversed(sorted(evalData,key=itemgetter(1))))
-        sortedPop = self.__population.getMembers()
+                                                          self.NUMGENES)
+            if (eval > self.__bestEval):
+                self.__bestEval = eval
+                self.__bestEvalGen = self.__gens
+            evalData.append([i, eval])
+        evalData = list(reversed(sorted(evalData,key=lambda x: x[1])))
+        sortedPop = [None] * self.__population.getSize()
         for i in range(len(evalData)):
             sortedPop[i] = self.__population.getMember(evalData[i][0])
-        """for i in range(len(sortedPop)):
-            self.__population.setMember(i, sortedPop[i])"""
+        for i in range(len(sortedPop)):
+            self.__population.setMember(i, sortedPop[i])
 
     def __createChildren(self, parents):
         children = []
@@ -117,7 +127,7 @@ class Algorithm:
     def __mutateChildren(self, children):
         if (self.MUTATIONSIZE > 0):
             for child in children:
-                if (random.randrange(self.MUTATIONCHANCE)):
+                if (random.randrange(100) < self.MUTATIONCHANCE):
                     points = []
                     for i in range(self.MUTATIONSIZE):
                         points.append(random.randrange(self.NUMGENES * self.NUMCHROMOSOMES))
@@ -163,7 +173,7 @@ class Algorithm:
     def __crossover(self, parent1, parent2):
         if (random.randrange(100) <= self.CROSSOVERCHANCE):
             if (self.CROSSOVERTYPE == CrossoverType.NONE):
-                return None
+                return [parent1, parent2]
             elif (self.CROSSOVERTYPE == CrossoverType.SINGLEPOINT):
                 child1 = Member(self.NUMCHROMOSOMES, self.NUMGENES)
                 child2 = Member(self.NUMCHROMOSOMES, self.NUMGENES)
@@ -209,8 +219,9 @@ class Algorithm:
             elif (self.CROSSOVERTYPE == CrossoverType.UNIFORM):
                 child1 = Member(self.NUMCHROMOSOMES, self.NUMGENES)
                 child2 = Member(self.NUMCHROMOSOMES, self.NUMGENES)
+                mask = random.randrange((1 << (self.NUMGENES * self.NUMCHROMOSOMES)) - 1)
                 ag = self.__mutator.uniformCrossover(self.aggregateChromosomes(parent1), self.aggregateChromosomes(parent2),
-                                                       random.randrange((1 << (self.NUMGENES * self.NUMCHROMOSOMES)) - 1))
+                                                       mask)
                 chr1 = self.separateChromosomes(ag[0])
                 chr2 = self.separateChromosomes(ag[1])
                 child1.setChromosome(0, chr1[0])
@@ -218,7 +229,7 @@ class Algorithm:
                 child2.setChromosome(0, chr2[0])
                 child2.setChromosome(1, chr2[1])
                 return [child1, child2]
-        return None
+        return []
 
     def __checkTermination(self):
         if (self.TERMINATIONTYPE == TerminationType.CONVERGENCE):
@@ -262,8 +273,9 @@ class Algorithm:
                     return False
             return True
         self.__gens += 1
-        if (self.__gens == self.MAXGEN):
+        if (self.__gens >= self.MAXGEN):
             return True
+            self.__gens = 0
         return False
 
     def getEvalData(self):
@@ -272,6 +284,7 @@ class Algorithm:
         totalY = 0
         totalFitness = 0
         bestScore = 0
+        bestX = bestY = 0
         for i in range(self.__population.getSize()):
             totalX += self.__population.getMember(i).getChromosome(0)
             totalY += self.__population.getMember(i).getChromosome(1)
@@ -279,17 +292,27 @@ class Algorithm:
                                               self.__population.getMember(i).getChromosome(1), self.NUMGENES)
             if score > bestScore:
                 bestScore = score
+                bestX = self.__population.getMember(i).getChromosome(0)
+                bestY = self.__population.getMember(i).getChromosome(1)
             totalFitness += score
         aveX = totalX / self.__population.getSize()
         aveY = totalY / self.__population.getSize()
         aveFitness = totalFitness / self.__population.getSize()
-        return [aveX, aveY, aveFitness, bestScore]
+        return [aveX, aveY, aveFitness, bestScore, bestX, bestY, self.__bestEvalGen]
 
-    def bruteForce(self):
-        return self.__evaluator.bruteForce(self.NUMGENES)
+    def bruteForce(self, width, height):
+        return self.__evaluator.bruteForce(self.NUMGENES, width, height)
 
     def getGenerationsPassed(self):
         return self.__gens
+
+    def getDisplayCoords(self, minx, maxx, miny, maxy):
+        coords = []
+        for i in range(self.__population.getSize()):
+            x = self.__evaluator.chromosomeToCoord(self.NUMGENES, minx, maxx, self.__population.getMember(i).getChromosome(0))
+            y = self.__evaluator.chromosomeToCoord(self.NUMGENES, miny, maxy, self.__population.getMember(i).getChromosome(1))
+            coords.append([x, y])
+        return coords
 
 class Mutator:
 
@@ -318,7 +341,7 @@ class Mutator:
     """
     def pointMutation(self, parent, points):
         for point in points:
-            mask = (1 << point) - 1
+            mask = (1 << point)
             if (parent & mask == 0):
                 parent += mask
             else:
@@ -347,10 +370,10 @@ class Evaluator:
                 lx = int(self.chromosomeToCoord(bits, 0, self.__widths[i] - 1, x))
                 ly = int(self.chromosomeToCoord(bits, 0, self.__heights[i] - 1, y))
                 #print(i, x, y, len(self.__images[i]), lx + ly * self.__widths[i])
-                eval += (self.__images[i][lx][ly] * self.__weights[i])
+                eval += (self.__images[i][ly][lx] * self.__weights[i])
                 #eval += (self.__images[i][lx + ly * self.__widths[i]] * self.__weights[i])
             else:
-                eval += (self.__images[i][x][y] * self.__weights[i])
+                eval += (self.__images[i][y][x] * self.__weights[i])
                 #eval += (self.__images[i][int(x) + int(y) * int(self.__widths[i])] * self.__weights[i])
         return eval
 
@@ -363,8 +386,8 @@ class Evaluator:
     def __loadGeotiff(self, file):
         gdal.UseExceptions()
         gt = gdal.Open(file)
-        scores = gt.ReadAsArray()
-        return [scores.tolist(), scores.shape[0], scores.shape[1]]
+        scores = gt.GetRasterBand(1).ReadAsArray()
+        return [scores.tolist(), scores.shape[1], scores.shape[0]]
 
     def coordToChromosome(self, bits, min, max, coord):
         range = max - min
@@ -376,7 +399,7 @@ class Evaluator:
         range = max - min
         return ((range * chromosome) / ((1 << bits)- 1)) + min
 
-    def bruteForce(self, bits):
+    def bruteForce(self, bits, width, height):
         smallest = len(self.__images[0])
         smallestIndex = 0
         for i in range(1, len(self.__images)):
@@ -385,6 +408,7 @@ class Evaluator:
                 smallestIndex = i
         bestScore = 0
         bestScoreIndices = []
+        bestScoreDisplay = []
         for x in range(self.__widths[smallestIndex]):
             for y in range(self.__heights[smallestIndex]):
                 score = self.evaluate(x, y, bits, True)
@@ -393,7 +417,11 @@ class Evaluator:
                     bestScoreIndices = [[x, y]]
                 elif score == bestScore:
                     bestScoreIndices.append([x, y])
-        return [bestScore, bestScoreIndices]
+        for coord in bestScoreIndices:
+            x = width * (coord[0] / self.__widths[smallestIndex])
+            y = height * (coord[1] / self.__heights[smallestIndex])
+            bestScoreDisplay.append([x, y])
+        return [bestScore, bestScoreIndices, bestScoreDisplay]
 
 
 
@@ -486,7 +514,7 @@ class Member:
         self.__NUMGENES = numGenes
         if randInit:
             for i in range(numChromosomes):
-                self.__chromosomes.append(random.randrange(1 << (numGenes - 1)))
+                self.__chromosomes.append(random.randrange((1 << numGenes) - 1))
         else:
             self.__chromosomes = [None] * numChromosomes
 
@@ -536,6 +564,9 @@ print(bin(n1), bin(n2))
 children = mut.pointCrossover(n1, n2, [1, 15], 16)
 for c in children:
     print(bin(c))
+mut.pointMutation(children[0], [0, 1, 2, 3, 4, 5, 6, 7, 8])
+for c in children:
+    print(bin(c))
 c1 = alg.separateChromosomes(children[0])
 c2 = alg.separateChromosomes(children[1])
 print("c1",bin(c1[0]),bin(c1[1]))
@@ -543,8 +574,8 @@ print("c2",bin(c2[0]),bin(c2[1]))
 
 x = alg.chromosomeToCoord(0, 255, 127)
 print(x)
-print(alg.coordToChromosome(0, 255, x))
-"""
+print(alg.coordToChromosome(0, 255, x))"""
+
 
 
 
